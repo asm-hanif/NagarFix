@@ -1,0 +1,443 @@
+package com.hanif.nagarfix
+
+import android.Manifest
+import android.app.Activity
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.location.LocationManager
+import android.net.Uri
+import android.os.Bundle
+import android.provider.Settings
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.ExperimentalMaterialApi
+import androidx.compose.material.ExposedDropdownMenuDefaults.outlinedTextFieldColors
+import androidx.compose.material.OutlinedTextField
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.compose.rememberAsyncImagePainter
+import com.google.accompanist.swiperefresh.SwipeRefresh
+import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
+import com.google.android.gms.location.*
+import com.google.android.gms.tasks.CancellationTokenSource
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.FirebaseDatabase
+
+class AddPostActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            AddPostScreen(this)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterialApi::class)
+@Composable
+fun AddPostScreen(activity: Activity) {
+    var senderName by remember { mutableStateOf("") }
+    var senderEmail by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf("") }
+    var description by remember { mutableStateOf("") }
+    var location by remember { mutableStateOf("") }
+    var selectedMediaUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var isRefreshing by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
+
+    // Permission launcher
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) fetchCurrentLocation(context, fusedLocationClient) { location = it }
+        else Toast.makeText(context, "Location permission denied!", Toast.LENGTH_SHORT).show()
+    }
+
+    LaunchedEffect(Unit) {
+        if (context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        } else {
+            fetchCurrentLocation(context, fusedLocationClient) { location = it }
+        }
+    }
+
+    // Gallery launcher
+    val galleryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetMultipleContents()
+    ) { uris: List<Uri> ->
+        selectedMediaUris = selectedMediaUris + uris
+    }
+
+    SwipeRefresh(
+        state = rememberSwipeRefreshState(isRefreshing),
+        onRefresh = {
+            isRefreshing = true
+            senderName = ""
+            senderEmail = ""
+            title = ""
+            description = ""
+            selectedMediaUris = emptyList()
+            // Refresh location
+            if (context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                fetchCurrentLocation(context, fusedLocationClient) { location = it }
+            }
+            isRefreshing = false
+        }
+    ) {
+        Scaffold(
+            bottomBar = {
+                val deepGreen = Color(0xFF006400)
+                NavigationBar(containerColor = deepGreen) {
+                    NavigationBarItem(
+                        icon = { Icon(Icons.Default.Home, contentDescription = "Home", tint = Color.White) },
+                        label = { Text("Home", color = Color.White) },
+                        selected = false,
+                        onClick = {
+                            val intent = Intent(activity, HomeActivity::class.java)
+                            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK
+                            activity.startActivity(intent)
+                        }
+                    )
+                    NavigationBarItem(
+                        icon = { Icon(Icons.Default.Notifications, contentDescription = "Reports", tint = Color.White) },
+                        label = { Text("Reports", color = Color.White) },
+                        selected = false,
+                        onClick = {
+                            val intent = Intent(activity, NotificationActivity::class.java)
+                            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK
+                            activity.startActivity(intent)
+                        }
+                    )
+                    NavigationBarItem(
+                        icon = { Icon(Icons.Default.Add, contentDescription = "Add", tint = Color(0xFF2E7D32)) },
+                        label = { Text("Add", color = Color.White) },
+                        selected = true,
+                        onClick = {}
+                    )
+                    NavigationBarItem(
+                        icon = { Icon(Icons.Default.Person, contentDescription = "Profile", tint = Color.White) },
+                        label = { Text("Profile", color = Color.White) },
+                        selected = false,
+                        onClick = {
+                            val intent = Intent(activity, ProfileActivity::class.java)
+                            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK
+                            activity.startActivity(intent)
+                        }
+                    )
+                }
+            }
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .background(Color.White)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.Top,
+                horizontalAlignment = Alignment.Start
+            ) {
+
+                // Header
+                Box(
+                    modifier = Modifier
+                        .padding(top = 0.dp)
+                        .fillMaxWidth(fraction = 0.6f)
+                        .height(50.dp)
+                        .background(
+                            color = Color(0xFF2E7D32),
+                            shape = RoundedCornerShape(topEnd = 30.dp)
+                        ),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    Text(
+                        text = "Create a Post",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        modifier = Modifier.padding(start = 16.dp)
+                    )
+                }
+
+                Spacer(Modifier.height(20.dp))
+
+                OutlinedTextField(
+                    value = senderName,
+                    onValueChange = { senderName = it },
+                    label = { Text("Your Name", color = Color.Black) },
+                    textStyle = LocalTextStyle.current.copy(color = Color.Black),
+                    shape = RoundedCornerShape(30.dp),
+                    colors = outlinedTextFieldColors(
+                        backgroundColor = Color(0xFFE0E0E0),
+                        focusedBorderColor = Color(0xFF2E7D32),
+                        unfocusedBorderColor = Color(0xFF2E7D32),
+                        textColor = Color.Black,
+                        cursorColor = Color(0xFF2E7D32)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp),
+                    singleLine = true
+                )
+                Spacer(Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = senderEmail,
+                    onValueChange = { senderEmail = it },
+                    label = { Text("Your Email", color = Color.Black) },
+                    textStyle = LocalTextStyle.current.copy(color = Color.Black),
+                    shape = RoundedCornerShape(30.dp),
+                    colors = outlinedTextFieldColors(
+                        backgroundColor = Color(0xFFE0E0E0),
+                        focusedBorderColor = Color(0xFF2E7D32),
+                        unfocusedBorderColor = Color(0xFF2E7D32),
+                        textColor = Color.Black,
+                        cursorColor = Color(0xFF2E7D32)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp),
+                    singleLine = true
+                )
+                Spacer(Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Title", color = Color.Black) },
+                    textStyle = LocalTextStyle.current.copy(color = Color.Black),
+                    shape = RoundedCornerShape(30.dp),
+                    colors = outlinedTextFieldColors(
+                        backgroundColor = Color(0xFFE0E0E0),
+                        focusedBorderColor = Color(0xFF2E7D32),
+                        unfocusedBorderColor = Color(0xFF2E7D32),
+                        textColor = Color.Black,
+                        cursorColor = Color(0xFF2E7D32)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp),
+                    singleLine = true
+                )
+                Spacer(Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("Description", color = Color.Black) },
+                    textStyle = LocalTextStyle.current.copy(color = Color.Black),
+                    shape = RoundedCornerShape(30.dp),
+                    colors = outlinedTextFieldColors(
+                        backgroundColor = Color(0xFFE0E0E0),
+                        focusedBorderColor = Color(0xFF2E7D32),
+                        unfocusedBorderColor = Color(0xFF2E7D32),
+                        textColor = Color.Black,
+                        cursorColor = Color(0xFF2E7D32)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp),
+                    singleLine = true
+                )
+
+                Spacer(Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = location,
+                    onValueChange = { location = it },
+                    label = { Text("Location", color = Color.Black) },
+                    textStyle = LocalTextStyle.current.copy(color = Color.Black),
+                    shape = RoundedCornerShape(30.dp),
+                    colors = outlinedTextFieldColors(
+                        backgroundColor = Color(0xFFE0E0E0),
+                        focusedBorderColor = Color(0xFF2E7D32),
+                        unfocusedBorderColor = Color(0xFF2E7D32),
+                        textColor = Color.Black,
+                        cursorColor = Color(0xFF2E7D32)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp),
+                    singleLine = true
+                )
+
+                Spacer(Modifier.height(25.dp))
+
+                Row(
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                ) {
+                    Button(
+                        onClick = { galleryLauncher.launch("image/*") },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                        shape = RoundedCornerShape(30.dp)
+                    ) {
+                        Icon(Icons.Default.Photo, contentDescription = "Gallery")
+                        Spacer(Modifier.width(4.dp))
+                        Text("Gallery")
+                    }
+                }
+
+                Spacer(Modifier.height(5.dp))
+
+                selectedMediaUris.forEach { uri ->
+                    Image(
+                        painter = rememberAsyncImagePainter(uri),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp)
+                            .background(Color(0xFF2E7D32))
+                            .padding(vertical = 4.dp),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+
+                Spacer(Modifier.height(23.dp))
+
+                Button(
+                    onClick = {
+                        if (senderName.isNotBlank() && senderEmail.isNotBlank() && title.isNotBlank() &&
+                            description.isNotBlank() && location.isNotBlank()
+                        ) {
+                            val subject = "New Post from $senderName: $title"
+                            val body = """
+                                👤 Sender Name: $senderName
+                                📧 Sender Email: $senderEmail
+                                📌 Title: $title
+                                📝 Description: $description
+                                📍 Location: $location
+                            """.trimIndent()
+
+                            val emailIntent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                                type = "message/rfc822"
+                                putExtra(Intent.EXTRA_EMAIL, arrayOf("abusayed1952hanif@gmail.com"))
+                                putExtra(Intent.EXTRA_SUBJECT, subject)
+                                putExtra(Intent.EXTRA_TEXT, body)
+                                if (selectedMediaUris.isNotEmpty()) {
+                                    putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(selectedMediaUris))
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                            }
+
+                            try {
+                                activity.startActivity(Intent.createChooser(emailIntent, "Send Post via Email"))
+                                Toast.makeText(activity, "Your report sent successfully!", Toast.LENGTH_LONG).show()
+                            } catch (e: Exception) {
+                                Toast.makeText(activity, "Error occurred! Try again.", Toast.LENGTH_LONG).show()
+                            }
+                        } else {
+                            Toast.makeText(activity, "Please fill all fields!", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        .height(50.dp)
+                        .shadow(8.dp, RoundedCornerShape(30.dp), clip = false),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                    shape = RoundedCornerShape(30.dp)
+                ) {
+                    Text("Send Report", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+
+                Spacer(Modifier.height(15.dp))
+
+                Button(
+                    onClick = {
+                        if (senderName.isNotBlank() && senderEmail.isNotBlank() && title.isNotBlank() &&
+                            description.isNotBlank() && location.isNotBlank()
+                        ) {
+                            val database = FirebaseDatabase.getInstance()
+                            val postsRef = database.getReference("posts")
+                            val postId = postsRef.push().key ?: System.currentTimeMillis().toString()
+
+                            val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+
+                            val postMap = mapOf(
+                                "id" to postId,
+                                "senderName" to senderName,
+                                "senderEmail" to senderEmail,
+                                "title" to title,
+                                "description" to description,
+                                "location" to location,
+                                "userId" to currentUserId
+                            )
+
+                            postsRef.child(postId).setValue(postMap)
+                                .addOnSuccessListener {
+                                    Toast.makeText(activity, "Your issue posted successfully!", Toast.LENGTH_LONG).show()
+                                    senderName = ""
+                                    senderEmail = ""
+                                    title = ""
+                                    description = ""
+                                    location = ""
+                                    selectedMediaUris = emptyList()
+                                }
+                                .addOnFailureListener {
+                                    Toast.makeText(activity, "Failed to post issue!", Toast.LENGTH_LONG).show()
+                                }
+                        } else {
+                            Toast.makeText(activity, "Please fill all fields!", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        .height(50.dp)
+                        .shadow(8.dp, RoundedCornerShape(30.dp), clip = false),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                    shape = RoundedCornerShape(30.dp)
+                ) {
+                    Text("Post Issue", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+
+                Spacer(Modifier.height(30.dp))
+            }
+        }
+    }
+}
+
+private fun fetchCurrentLocation(
+    context: android.content.Context,
+    fusedLocationClient: FusedLocationProviderClient,
+    onLocationFetched: (String) -> Unit
+) {
+    val locationManager = context.getSystemService(Activity.LOCATION_SERVICE) as LocationManager
+    if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+        Toast.makeText(context, "Please enable GPS", Toast.LENGTH_SHORT).show()
+        context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+        return
+    }
+
+    fusedLocationClient.getCurrentLocation(
+        Priority.PRIORITY_HIGH_ACCURACY,
+        CancellationTokenSource().token
+    ).addOnSuccessListener { loc ->
+        if (loc != null) {
+            onLocationFetched("Lat: ${loc.latitude}, Lon: ${loc.longitude}")
+        } else {
+            Toast.makeText(context, "Unable to get location.", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
