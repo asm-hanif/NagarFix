@@ -1,6 +1,7 @@
 package com.hanif.nagarfix
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -10,19 +11,18 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.google.accompanist.swiperefresh.SwipeRefresh
-import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import com.google.firebase.database.*
+import kotlinx.coroutines.flow.map
 
 data class NPost(
     val id: String = "",
@@ -31,25 +31,47 @@ data class NPost(
 )
 
 class NotificationActivity : ComponentActivity() {
+    private val DARK_MODE_KEY = booleanPreferencesKey("dark_mode")
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            NotificationScreen(this)
+            val darkMode by dataStore.data.map { it[DARK_MODE_KEY] ?: false }.collectAsState(initial = false)
+
+            MaterialTheme(
+                colorScheme = if (darkMode) darkColorScheme(
+                    primary = Color(0xFF81C784),
+                    onPrimary = Color.Black,
+                    surface = Color(0xFF1E1E1E),
+                    onSurface = Color.White,
+                    background = Color(0xFF121212),
+                    onBackground = Color.White
+                ) else lightColorScheme(
+                    primary = Color(0xFF2E7D32),
+                    onPrimary = Color.White,
+                    surface = Color.White,
+                    onSurface = Color.Black,
+                    background = Color(0xFFF2F2F2),
+                    onBackground = Color.Black
+                )
+            ) {
+                NotificationScreen(this, darkMode)
+            }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NotificationScreen(activity: Activity) {
+fun NotificationScreen(activity: Activity, isDarkMode: Boolean) {
     val nposts = remember { mutableStateListOf<NPost>() }
-    var isRefreshing by remember { mutableStateOf(false) }
+    var isLoading by remember { mutableStateOf(false) }
 
     val database = FirebaseDatabase.getInstance()
     val postsRef = database.getReference("posts")
 
-    // ✅ Use real-time listener to reflect updates and deletions automatically
     LaunchedEffect(Unit) {
-        isRefreshing = true
+        isLoading = true
         postsRef.addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 val tempList = mutableListOf<NPost>()
@@ -63,37 +85,35 @@ fun NotificationScreen(activity: Activity) {
                         continue
                     }
                 }
-                // Sort by id descending (latest first)
                 tempList.sortByDescending { it.id }
                 nposts.clear()
                 nposts.addAll(tempList)
-                isRefreshing = false
+                isLoading = false
             }
 
             override fun onCancelled(error: DatabaseError) {
-                isRefreshing = false
+                isLoading = false
             }
         })
     }
 
-    Scaffold(bottomBar = { BottomNavigationBarNotification(activity) }) { padding ->
+    Scaffold(
+        bottomBar = { BottomNavigationBar(activity) },
+        containerColor = MaterialTheme.colorScheme.background
+    ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .background(Color(0xFFF2F2F2)),
-            verticalArrangement = Arrangement.Top,
-            horizontalAlignment = Alignment.Start
         ) {
             // Top Bar
             Box(
                 modifier = Modifier
-                    .padding(top = 0.dp)
                     .fillMaxWidth(fraction = 0.6f)
                     .height(50.dp)
                     .background(
                         color = Color(0xFF2E7D32),
-                        shape = RoundedCornerShape(topEnd = 30.dp)
+                        shape = RoundedCornerShape(bottomEnd = 30.dp)
                     ),
                 contentAlignment = Alignment.CenterStart
             ) {
@@ -108,20 +128,20 @@ fun NotificationScreen(activity: Activity) {
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Swipe refresh list
-            SwipeRefresh(
-                state = rememberSwipeRefreshState(isRefreshing),
-                onRefresh = { /* Optional manual refresh */ },
-                modifier = Modifier.fillMaxSize()
-            ) {
+            if (isLoading && nposts.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Color(0xFF2E7D32))
+                }
+            } else {
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(bottom = 16.dp)
                 ) {
                     items(nposts, key = { it.id }) { post ->
-                        NotificationItem(post)
+                        NotificationItem(post, isDarkMode)
                     }
                 }
             }
@@ -130,64 +150,28 @@ fun NotificationScreen(activity: Activity) {
 }
 
 @Composable
-fun NotificationItem(post: NPost) {
+fun NotificationItem(post: NPost, isDarkMode: Boolean) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(6.dp)
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(4.dp)
     ) {
         Column(
-            modifier = Modifier
-                .background(Color(0xFFE0E0E0))
-                .padding(16.dp)
+            modifier = Modifier.padding(16.dp)
         ) {
-            Text(text = post.title, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Text(
+                text = post.title, 
+                fontWeight = FontWeight.Bold, 
+                fontSize = 18.sp,
+                color = MaterialTheme.colorScheme.onSurface
+            )
             Spacer(modifier = Modifier.height(6.dp))
-            Text(text = "📍 Location: ${post.location}", fontSize = 15.sp)
+            Text(
+                text = "📍 Location: ${post.location}", 
+                fontSize = 14.sp,
+                color = if (isDarkMode) Color.LightGray else Color.Gray
+            )
         }
-    }
-}
-
-@Composable
-fun BottomNavigationBarNotification(activity: Activity) {
-    val deepGreen = Color(0xFF006400)
-
-    NavigationBar(containerColor = deepGreen) {
-        NavigationBarItem(
-            icon = { Icon(Icons.Default.Home, contentDescription = "Home", tint = Color.White) },
-            label = { Text("Home", color = Color.White) },
-            selected = false,
-            onClick = {
-                val intent = Intent(activity, HomeActivity::class.java)
-                intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK
-                activity.startActivity(intent)
-            }
-        )
-        NavigationBarItem(
-            icon = { Icon(Icons.Default.Notifications, contentDescription = "Reports", tint = Color(0xFF2E7D32)) },
-            label = { Text("Reports", color = Color.White) },
-            selected = true,
-            onClick = {}
-        )
-        NavigationBarItem(
-            icon = { Icon(Icons.Default.Add, contentDescription = "Add Post", tint = Color.White) },
-            label = { Text("Add", color = Color.White) },
-            selected = false,
-            onClick = {
-                val intent = Intent(activity, AddPostActivity::class.java)
-                intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK
-                activity.startActivity(intent)
-            }
-        )
-        NavigationBarItem(
-            icon = { Icon(Icons.Default.Person, contentDescription = "Profile", tint = Color.White) },
-            label = { Text("Profile", color = Color.White) },
-            selected = false,
-            onClick = {
-                val intent = Intent(activity, ProfileActivity::class.java)
-                intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK
-                activity.startActivity(intent)
-            }
-        )
     }
 }
